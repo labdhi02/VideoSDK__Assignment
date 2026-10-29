@@ -15,17 +15,74 @@ A React-based file explorer with a robust JavaScript SDK for managing files and 
 
 ## Getting Started
 
-### Installation
+The commands below should be run from the `react-app` directory.
+
+### 3. Install dependencies and run the application
+
+Install the React application's dependencies:
 
 ```bash
+cd react-app
 npm install
 ```
 
-### Development
+Start the Vite development server:
 
 ```bash
 npm run dev
 ```
+
+Open the local URL printed by Vite (normally `http://localhost:5173`) in a browser.
+
+To create a production build:
+
+```bash
+npm run build
+```
+
+To preview the production build locally:
+
+```bash
+npm run preview
+```
+
+## React App and SDK Usage
+
+The app creates one SDK instance in [`src/explorer.js`](./src/explorer.js):
+
+```js
+import { createFileExplorer } from '../../sdk/index.js';
+
+export const fs = createFileExplorer();
+```
+
+The [`useFileExplorer` hook](./src/hooks/useFileExplorer.js) subscribes to SDK changes
+with React's `useSyncExternalStore` and exposes the current tree and file operations:
+
+```jsx
+import { useFileExplorer } from './hooks/useFileExplorer';
+
+function Example() {
+  const { tree, rootId, actions, canUndo, canRedo } = useFileExplorer();
+
+  const addFile = () => {
+    actions.createFile(rootId, 'welcome.txt', 'Hello from the SDK');
+  };
+
+  return (
+    <>
+      <button onClick={addFile}>Add file</button>
+      <button onClick={actions.undo} disabled={!canUndo}>Undo</button>
+      <button onClick={actions.redo} disabled={!canRedo}>Redo</button>
+      <pre>{JSON.stringify(tree, null, 2)}</pre>
+    </>
+  );
+}
+```
+
+The SDK also provides `createFolder`, `rename`, `move`, `delete`, `search`,
+`getItem`, `getPath`, and `getPathString`. Invalid operations are surfaced as
+`FileExplorerError` instances and are handled by the hook's error callback.
 
 ### Build
 
@@ -41,39 +98,35 @@ npm run preview
 
 ## Testing
 
-The project includes comprehensive automated tests covering:
-- SDK core functionality
-- React integration
-- Component behavior
-- End-to-end workflows
+### 4. Run automated tests
 
-### Run Tests
+From the `react-app` directory, install dependencies if you have not already:
 
 ```bash
-# Run tests in watch mode
+npm install
+```
+
+Run the complete automated test suite once:
+
+```bash
+npm run test:run
+```
+
+Other supported test commands are:
+
+```bash
+# Run tests interactively in watch mode
 npm test
 
-# Run tests once
-npm run test:run
-
-# Run tests with UI
+# Run tests with the Vitest UI
 npm run test:ui
 
-# Run tests with coverage
+# Generate a coverage report
 npm run test:coverage
 ```
 
-### Test Coverage
-
-- **116 passing tests** covering all requirements
-- SDK operations (create, rename, move, delete)
-- Error handling and validation
-- Undo/redo with nested restoration
-- Search functionality
-- React subscriptions and cleanup
-- UI interactions and accessibility
-
-See [TEST_SUMMARY.md](./TEST_SUMMARY.md) for detailed test documentation.
+The tests cover SDK operations, error handling, undo/redo, search, React
+subscriptions, component behavior, and accessibility interactions.
 
 ## Architecture
 
@@ -104,15 +157,6 @@ Custom hook using `useSyncExternalStore`:
 - `Breadcrumb.jsx` - Path navigation
 - Various dialogs and UI components
 
-## Keyboard Shortcuts
-
-- `Ctrl/Cmd + N` - New File
-- `Ctrl/Cmd + Shift + N` - New Folder
-- `F2` - Rename selected item
-- `Delete` - Delete selected item
-- `Ctrl/Cmd + Z` - Undo
-- `Ctrl/Cmd + Y` or `Ctrl/Cmd + Shift + Z` - Redo
-- `Esc` - Close dialogs
 
 ## Performance Optimizations
 
@@ -129,7 +173,3 @@ Custom hook using `useSyncExternalStore`:
 - **Vite 8** - Build tool and dev server
 - **Vitest 5** - Testing framework
 - **@testing-library/react** - React testing utilities
-
-## License
-
-MIT
