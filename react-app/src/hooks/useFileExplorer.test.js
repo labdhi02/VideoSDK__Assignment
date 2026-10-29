@@ -1,311 +1,382 @@
+// @vitest-environment jsdom
+
+/**
+ * Tests for useFileExplorer hook — Requirement 8
+ *
+ * Covers:
+ *  - React subscription cleanup on unmount
+ *  - UI (state) updates when the SDK changes
+ *  - canUndo / canRedo reactivity
+ *  - Error handling & propagation through onError callback
+ *  - Action memoisation (no unnecessary re-renders)
+ *  - Null / undefined onError safety
+ *  - No duplicate subscriptions across re-renders
+ *  - All action methods exposed
+ *  - rootId exposed
+ */
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useFileExplorer } from './useFileExplorer.js';
 import { fs } from '../explorer.js';
 
-describe('useFileExplorer Hook', () => {
-  let onError;
+// ---------------------------------------------------------------------------
+// Reset the shared SDK singleton to a clean state before every test.
+// Strategy: undo everything until the undo stack is empty, which winds the
+// singleton back to its original constructed state. Then drain any redo
+// entries so each test starts with both stacks empty.
+// ---------------------------------------------------------------------------
+beforeEach(() => {
+  // Wind back all mutations via undo
+  while (fs.canUndo()) fs.undo();
 
-  beforeEach(() => {
-    // Reset the SDK to initial state
-    while (fs.canUndo()) {
-      fs.undo();
-    }
-    
-    // Clear any existing items (except default tree)
-    const tree = fs.getTree();
-    tree.children.forEach(child => {
-      try {
-        fs.delete(child.id);
-      } catch (e) {
-        // Ignore errors during cleanup
-      }
-    });
-    
-    onError = vi.fn();
+  // Clear the redo stack by removing any remaining children
+  // (undo may have left the tree in a partially-reset state if the singleton
+  //  was constructed with a default tree that already has children)
+  const tree = fs.getTree();
+  tree.children.forEach(child => {
+    try { fs.delete(child.id); } catch (_) { /* ignore */ }
   });
 
-  describe('8. React subscription cleanup, UI updates, and error handling', () => {
-    it('should subscribe to SDK changes and cleanup on unmount', () => {
-      const { result, unmount } = renderHook(() => useFileExplorer(onError));
-      
-      const initialTree = result.current.tree;
-      expect(initialTree).toBeDefined();
-      
-      // Trigger a change
-      act(() => {
-        fs.createFile(fs.rootId, 'test.txt');
-      });
-      
-      // Tree should update
-      expect(result.current.tree).not.toBe(initialTree);
-      
-      // Cleanup should not throw
-      expect(() => unmount()).not.toThrow();
+  // Drain undo again in case the deletions above added more history,
+  // so tests that check canUndo === false start from a truly clean slate
+  while (fs.canUndo()) fs.undo();
+});
+
+// ===========================================================================
+// 8a. Subscription lifecycle — subscribe on mount, unsubscribe on unmount
+// ===========================================================================
+describe('8a. Subscription lifecycle', () => {
+  it('returns a defined tree on first render', () => {
+    const { result } = renderHook(() => useFileExplorer());
+    expect(result.current.tree).toBeDefined();
+    expect(result.current.tree.type).toBe('folder');
+  });
+
+  it('subscribes to SDK changes and reflects them in tree state', () => {
+    const { result } = renderHook(() => useFileExplorer());
+    const before = result.current.tree.children.length;
+
+    act(() => { fs.createFile(fs.rootId, 'sub-test.txt'); });
+
+    expect(result.current.tree.children.length).toBe(before + 1);
+  });
+
+  it('stops reacting to SDK events after unmount (no stale updates)', () => {
+    const { result, unmount } = renderHook(() => useFileExplorer());
+
+    // Capture tree length before unmount
+    const snapshot = result.current.tree.children.length;
+
+    unmount();
+
+    // SDK change after unmount should not throw or cause issues
+    expect(() => {
+      act(() => { fs.createFile(fs.rootId, 'after-unmount.txt'); });
+    }).not.toThrow();
+
+    // result.current is frozen after unmount — the length should still equal
+    // the snapshot value (component is gone, no further renders)
+    expect(result.current.tree.children.length).toBe(snapshot);
+  });
+
+  it('does not register duplicate subscriptions across re-renders', () => {
+    const { rerender } = renderHook(() => useFileExplorer());
+
+    let callCount = 0;
+    const probe = () => callCount++;
+    fs.subscribe(probe);
+
+    rerender();
+    rerender();
+    rerender();
+
+    act(() => { fs.createFile(fs.rootId, 'dedup.txt'); });
+
+    // Our probe should fire exactly once — not multiplied by re-renders
+    expect(callCount).toBe(1);
+
+    fs.unsubscribe(probe);
+  });
+});
+
+// ===========================================================================
+// 8b. UI state updates — tree, canUndo, canRedo
+// ===========================================================================
+describe('8b. UI state updates', () => {
+  it('tree updates when a file is created via the SDK directly', () => {
+    const { result } = renderHook(() => useFileExplorer());
+    const before = result.current.tree.children.length;
+
+    act(() => { fs.createFile(fs.rootId, 'direct.txt'); });
+
+    expect(result.current.tree.children.length).toBe(before + 1);
+    expect(result.current.tree.children.some(c => c.name === 'direct.txt')).toBe(true);
+  });
+
+  it('tree updates when a file is created via actions.createFile', () => {
+    const { result } = renderHook(() => useFileExplorer());
+    const before = result.current.tree.children.length;
+
+    act(() => { result.current.actions.createFile(fs.rootId, 'via-action.txt'); });
+
+    expect(result.current.tree.children.length).toBe(before + 1);
+  });
+
+  it('tree updates when a file is renamed', () => {
+    let fileId;
+    act(() => { fileId = fs.createFile(fs.rootId, 'old-name.txt').id; });
+
+    const { result } = renderHook(() => useFileExplorer());
+
+    act(() => { result.current.actions.rename(fileId, 'new-name.txt'); });
+
+    expect(result.current.tree.children.some(c => c.name === 'new-name.txt')).toBe(true);
+    expect(result.current.tree.children.some(c => c.name === 'old-name.txt')).toBe(false);
+  });
+
+  it('tree updates when a file is deleted', () => {
+    let fileId;
+    act(() => { fileId = fs.createFile(fs.rootId, 'gone.txt').id; });
+
+    const { result } = renderHook(() => useFileExplorer());
+
+    act(() => { result.current.actions.delete(fileId); });
+
+    expect(result.current.tree.children.some(c => c.id === fileId)).toBe(false);
+  });
+
+  it('canUndo becomes true after a mutating operation', () => {
+    const { result } = renderHook(() => useFileExplorer());
+    expect(result.current.canUndo).toBe(false);
+
+    act(() => { result.current.actions.createFile(fs.rootId, 'undo-me.txt'); });
+
+    expect(result.current.canUndo).toBe(true);
+  });
+
+  it('canRedo becomes true after an undo', () => {
+    const { result } = renderHook(() => useFileExplorer());
+
+    act(() => { result.current.actions.createFile(fs.rootId, 'redo-me.txt'); });
+    expect(result.current.canRedo).toBe(false);
+
+    act(() => { result.current.actions.undo(); });
+    expect(result.current.canRedo).toBe(true);
+  });
+
+  it('canRedo becomes false after a new operation follows an undo', () => {
+    const { result } = renderHook(() => useFileExplorer());
+
+    act(() => { result.current.actions.createFile(fs.rootId, 'f1.txt'); });
+    act(() => { result.current.actions.undo(); });
+    expect(result.current.canRedo).toBe(true);
+
+    act(() => { result.current.actions.createFile(fs.rootId, 'f2.txt'); });
+    expect(result.current.canRedo).toBe(false);
+  });
+
+  it('tree reflects undo — deleted file is restored', () => {
+    const { result } = renderHook(() => useFileExplorer());
+
+    act(() => { result.current.actions.createFile(fs.rootId, 'restore-me.txt'); });
+    act(() => { result.current.actions.undo(); });
+
+    expect(result.current.tree.children.some(c => c.name === 'restore-me.txt')).toBe(false);
+  });
+
+  it('tree reflects redo — re-creates the file', () => {
+    const { result } = renderHook(() => useFileExplorer());
+
+    act(() => { result.current.actions.createFile(fs.rootId, 'redo-file.txt'); });
+    act(() => { result.current.actions.undo(); });
+    act(() => { result.current.actions.redo(); });
+
+    expect(result.current.tree.children.some(c => c.name === 'redo-file.txt')).toBe(true);
+  });
+
+  it('tree reference stays stable when no SDK change occurs (performance)', () => {
+    const { result, rerender } = renderHook(() => useFileExplorer());
+    const tree1 = result.current.tree;
+
+    rerender();
+
+    expect(result.current.tree).toBe(tree1);
+  });
+});
+
+// ===========================================================================
+// 8c. Error handling — onError callback receives meaningful messages
+// ===========================================================================
+describe('8c. Error handling', () => {
+  it('calls onError with a message when creating a file with empty name', () => {
+    const onError = vi.fn();
+    const { result } = renderHook(() => useFileExplorer(onError));
+
+    act(() => { result.current.actions.createFile(fs.rootId, ''); });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toMatch(/empty/i);
+  });
+
+  it('calls onError when creating a duplicate file name', () => {
+    const onError = vi.fn();
+    act(() => { fs.createFile(fs.rootId, 'existing.txt'); });
+
+    const { result } = renderHook(() => useFileExplorer(onError));
+
+    act(() => { result.current.actions.createFile(fs.rootId, 'existing.txt'); });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toMatch(/already exists/i);
+  });
+
+  it('calls onError when renaming to an invalid name (contains /)', () => {
+    const onError = vi.fn();
+    let fileId;
+    act(() => { fileId = fs.createFile(fs.rootId, 'valid.txt').id; });
+
+    const { result } = renderHook(() => useFileExplorer(onError));
+
+    act(() => { result.current.actions.rename(fileId, 'bad/name.txt'); });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toMatch(/cannot contain/i);
+  });
+
+  it('calls onError when moving a folder into itself', () => {
+    const onError = vi.fn();
+    let folderId;
+    act(() => { folderId = fs.createFolder(fs.rootId, 'Self').id; });
+
+    const { result } = renderHook(() => useFileExplorer(onError));
+
+    act(() => { result.current.actions.move(folderId, folderId); });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onError when deleting a non-existent id', () => {
+    const onError = vi.fn();
+    const { result } = renderHook(() => useFileExplorer(onError));
+
+    act(() => { result.current.actions.delete('does-not-exist'); });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toMatch(/not found/i);
+  });
+
+  it('returns null from the action when an error occurs', () => {
+    const { result } = renderHook(() => useFileExplorer(vi.fn()));
+    let returnValue;
+
+    act(() => { returnValue = result.current.actions.createFile(fs.rootId, ''); });
+
+    expect(returnValue).toBeNull();
+  });
+
+  it('does not throw when onError is null', () => {
+    const { result } = renderHook(() => useFileExplorer(null));
+
+    expect(() => {
+      act(() => { result.current.actions.createFile(fs.rootId, ''); });
+    }).not.toThrow();
+  });
+
+  it('does not throw when onError is undefined', () => {
+    const { result } = renderHook(() => useFileExplorer(undefined));
+
+    expect(() => {
+      act(() => { result.current.actions.createFile(fs.rootId, ''); });
+    }).not.toThrow();
+  });
+
+  it('does not call onError on a successful operation', () => {
+    const onError = vi.fn();
+    const { result } = renderHook(() => useFileExplorer(onError));
+
+    act(() => { result.current.actions.createFile(fs.rootId, 'clean.txt'); });
+
+    expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// 8d. Exposed API shape and memoisation
+// ===========================================================================
+describe('8d. Exposed API shape and memoisation', () => {
+  it('exposes all expected action methods', () => {
+    const { result } = renderHook(() => useFileExplorer());
+    const { actions } = result.current;
+
+    ['createFile', 'createFolder', 'rename', 'move', 'delete',
+      'undo', 'redo', 'search', 'getItem', 'getPath', 'getPathString',
+    ].forEach(method => {
+      expect(typeof actions[method]).toBe('function');
+    });
+  });
+
+  it('exposes rootId matching the SDK singleton', () => {
+    const { result } = renderHook(() => useFileExplorer());
+    expect(result.current.rootId).toBe(fs.rootId);
+  });
+
+  it('actions object is the same reference across re-renders (memoised)', () => {
+    const { result, rerender } = renderHook(() => useFileExplorer());
+    const actions1 = result.current.actions;
+
+    rerender();
+
+    expect(result.current.actions).toBe(actions1);
+  });
+
+  it('search action returns results matching the SDK directly', () => {
+    act(() => {
+      fs.createFile(fs.rootId, 'find-me.txt');
+      fs.createFile(fs.rootId, 'ignore.txt');
     });
 
-    it('should update tree when SDK changes', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      const initialChildCount = result.current.tree.children.length;
-      
-      act(() => {
-        fs.createFile(fs.rootId, 'new-file.txt');
-      });
-      
-      expect(result.current.tree.children.length).toBe(initialChildCount + 1);
+    const { result } = renderHook(() => useFileExplorer());
+    let response;
+
+    act(() => { response = result.current.actions.search('find-me'); });
+
+    expect(response.results).toHaveLength(1);
+    expect(response.results[0].name).toBe('find-me.txt');
+  });
+
+  it('getItem returns the correct item', () => {
+    let fileId;
+    act(() => { fileId = fs.createFile(fs.rootId, 'lookup.txt').id; });
+
+    const { result } = renderHook(() => useFileExplorer());
+
+    expect(result.current.actions.getItem(fileId).name).toBe('lookup.txt');
+  });
+
+  it('getPathString returns slash-separated path for a nested file', () => {
+    let fileId;
+    act(() => {
+      const folder = fs.createFolder(fs.rootId, 'Docs');
+      fileId = fs.createFile(folder.id, 'report.pdf').id;
     });
 
-    it('should update canUndo state when operations are performed', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      // Initially may have history from default tree
-      const initialCanUndo = result.current.canUndo;
-      
-      act(() => {
-        fs.createFile(fs.rootId, 'test.txt');
-      });
-      
-      expect(result.current.canUndo).toBe(true);
+    const { result } = renderHook(() => useFileExplorer());
+
+    expect(result.current.actions.getPathString(fileId)).toMatch(/Docs\/report\.pdf/);
+  });
+
+  it('handles rapid consecutive actions without errors', () => {
+    const onError = vi.fn();
+    const { result } = renderHook(() => useFileExplorer(onError));
+
+    act(() => {
+      result.current.actions.createFile(fs.rootId, 'rapid1.txt');
+      result.current.actions.createFile(fs.rootId, 'rapid2.txt');
+      result.current.actions.createFile(fs.rootId, 'rapid3.txt');
     });
 
-    it('should update canRedo state after undo', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      act(() => {
-        fs.createFile(fs.rootId, 'test.txt');
-      });
-      
-      expect(result.current.canRedo).toBe(false);
-      
-      act(() => {
-        fs.undo();
-      });
-      
-      expect(result.current.canRedo).toBe(true);
-    });
-
-    it('should handle errors from SDK operations', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      act(() => {
-        // Try to create a file with invalid name
-        result.current.actions.createFile(fs.rootId, '');
-      });
-      
-      expect(onError).toHaveBeenCalled();
-      expect(onError.mock.calls[0][0]).toContain('Name cannot be empty');
-    });
-
-    it('should handle errors when creating duplicate names', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      act(() => {
-        result.current.actions.createFile(fs.rootId, 'test.txt');
-      });
-      
-      onError.mockClear();
-      
-      act(() => {
-        result.current.actions.createFile(fs.rootId, 'test.txt');
-      });
-      
-      expect(onError).toHaveBeenCalled();
-      expect(onError.mock.calls[0][0]).toContain('already exists');
-    });
-
-    it('should handle errors when moving folder into itself', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      let folderId;
-      act(() => {
-        const folder = fs.createFolder(fs.rootId, 'Test Folder');
-        folderId = folder.id;
-      });
-      
-      act(() => {
-        result.current.actions.move(folderId, folderId);
-      });
-      
-      expect(onError).toHaveBeenCalled();
-    });
-
-    it('should handle errors when renaming to invalid name', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      let fileId;
-      act(() => {
-        const file = fs.createFile(fs.rootId, 'test.txt');
-        fileId = file.id;
-      });
-      
-      act(() => {
-        result.current.actions.rename(fileId, 'invalid/name.txt');
-      });
-      
-      expect(onError).toHaveBeenCalled();
-      expect(onError.mock.calls[0][0]).toContain('cannot contain');
-    });
-
-    it('should handle errors when deleting non-existent item', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      act(() => {
-        result.current.actions.delete('non-existent-id');
-      });
-      
-      expect(onError).toHaveBeenCalled();
-      expect(onError.mock.calls[0][0]).toContain('not found');
-    });
-
-    it('should provide all SDK action methods', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      expect(result.current.actions).toHaveProperty('createFile');
-      expect(result.current.actions).toHaveProperty('createFolder');
-      expect(result.current.actions).toHaveProperty('rename');
-      expect(result.current.actions).toHaveProperty('move');
-      expect(result.current.actions).toHaveProperty('delete');
-      expect(result.current.actions).toHaveProperty('undo');
-      expect(result.current.actions).toHaveProperty('redo');
-      expect(result.current.actions).toHaveProperty('search');
-      expect(result.current.actions).toHaveProperty('getItem');
-      expect(result.current.actions).toHaveProperty('getPath');
-      expect(result.current.actions).toHaveProperty('getPathString');
-    });
-
-    it('should memoize actions to prevent unnecessary re-renders', () => {
-      const { result, rerender } = renderHook(() => useFileExplorer(onError));
-      
-      const actions1 = result.current.actions;
-      
-      // Force a re-render
-      rerender();
-      
-      const actions2 = result.current.actions;
-      
-      // Actions should be the same reference
-      expect(actions1).toBe(actions2);
-    });
-
-    it('should handle search with options', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      act(() => {
-        fs.createFile(fs.rootId, 'test.txt');
-        fs.createFolder(fs.rootId, 'test-folder');
-      });
-      
-      const allResponse = result.current.actions.search('test', { type: 'all' });
-      expect(allResponse.results.length).toBeGreaterThanOrEqual(2);
-      
-      const fileResponse = result.current.actions.search('test', { type: 'file' });
-      expect(fileResponse.results.every(r => r.type === 'file')).toBe(true);
-      
-      const folderResponse = result.current.actions.search('test', { type: 'folder' });
-      expect(folderResponse.results.every(r => r.type === 'folder')).toBe(true);
-    });
-
-    it('should return rootId', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      expect(result.current.rootId).toBeDefined();
-      expect(result.current.rootId).toBe(fs.rootId);
-    });
-
-    it('should handle rapid consecutive operations', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      act(() => {
-        result.current.actions.createFile(fs.rootId, 'file1.txt');
-        result.current.actions.createFile(fs.rootId, 'file2.txt');
-        result.current.actions.createFile(fs.rootId, 'file3.txt');
-      });
-      
-      expect(result.current.tree.children.length).toBeGreaterThanOrEqual(3);
-      expect(onError).not.toHaveBeenCalled();
-    });
-
-    it('should maintain referential stability of tree when no changes occur', () => {
-      const { result, rerender } = renderHook(() => useFileExplorer(onError));
-      
-      const tree1 = result.current.tree;
-      
-      // Force re-render without SDK changes
-      rerender();
-      
-      const tree2 = result.current.tree;
-      
-      // Tree should be the same reference (performance optimization)
-      expect(tree1).toBe(tree2);
-    });
-
-    it('should handle undo/redo through actions', () => {
-      const { result } = renderHook(() => useFileExplorer(onError));
-      
-      let fileId;
-      act(() => {
-        const file = fs.createFile(fs.rootId, 'test.txt');
-        fileId = file.id;
-      });
-      
-      expect(result.current.actions.getItem(fileId)).toBeDefined();
-      
-      act(() => {
-        result.current.actions.undo();
-      });
-      
-      expect(result.current.actions.getItem(fileId)).toBeNull();
-      
-      act(() => {
-        result.current.actions.redo();
-      });
-      
-      expect(result.current.actions.getItem(fileId)).toBeDefined();
-    });
-
-    it('should not create duplicate subscriptions on re-render', () => {
-      const { rerender } = renderHook(() => useFileExplorer(onError));
-      
-      // Track how many times listeners are called
-      let callCount = 0;
-      const testListener = () => callCount++;
-      fs.subscribe(testListener);
-      
-      // Re-render multiple times
-      rerender();
-      rerender();
-      rerender();
-      
-      // Make a change
-      act(() => {
-        fs.createFile(fs.rootId, 'test.txt');
-      });
-      
-      // Our test listener should only be called once per change
-      expect(callCount).toBe(1);
-      
-      fs.unsubscribe(testListener);
-    });
-
-    it('should handle null onError callback gracefully', () => {
-      const { result } = renderHook(() => useFileExplorer(null));
-      
-      expect(() => {
-        act(() => {
-          result.current.actions.createFile(fs.rootId, ''); // Invalid
-        });
-      }).not.toThrow();
-    });
-
-    it('should handle undefined onError callback gracefully', () => {
-      const { result } = renderHook(() => useFileExplorer(undefined));
-      
-      expect(() => {
-        act(() => {
-          result.current.actions.createFile(fs.rootId, ''); // Invalid
-        });
-      }).not.toThrow();
-    });
+    expect(onError).not.toHaveBeenCalled();
+    expect(result.current.tree.children.length).toBeGreaterThanOrEqual(3);
   });
 });

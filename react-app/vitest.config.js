@@ -5,27 +5,35 @@ export default defineConfig({
   plugins: [react()],
   server: {
     fs: {
-      // Allow vitest to read files outside the app root (e.g. ../sdk)
+      // Allow vitest to reach the sdk folder outside the app root
       allow: ['..'],
     },
   },
   test: {
     globals: true,
-    environment: 'jsdom',
-    setupFiles: './src/test/setup.js',
+    // Default: pure Node for SDK tests (no DOM overhead)
+    environment: 'node',
+    // Hook/component test files declare "// @vitest-environment jsdom" at the
+    // top and need the jest-dom matchers + cleanup wired up
+    environmentMatchGlobs: [
+      ['src/**/*.{test,spec}.{js,jsx}', 'jsdom'],
+    ],
+    setupFiles: ['./src/test/setup.js'],
     include: [
-      'src/**/*.{test,spec}.{js,jsx}',
       '../sdk/**/*.{test,spec}.js',
+      'src/**/*.{test,spec}.{js,jsx}',
     ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
+      include: ['../sdk/**/*.js', 'src/**/*.{js,jsx}'],
       exclude: [
-        'node_modules/',
+        '../sdk/**/*.test.js',
+        'src/**/*.test.{js,jsx}',
         'src/test/',
-        '**/*.config.js',
         '**/main.jsx',
-        '**/index.jsx',
+        '**/index.{js,jsx}',
+        '**/*.config.{js,ts}',
       ],
     },
   },
