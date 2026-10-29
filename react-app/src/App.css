@@ -1,0 +1,77 @@
+/* Custom animations and utilities that complement Tailwind */
+
+/* Tree node visual line connection */
+.tree-node-children {
+  margin-left: 0.5rem;
+  border-left: 2px solid rgb(229 231 235);
+  padding-left: 0.5rem;
+}
+
+@media (min-width: 640px) {
+  .tree-node-children {
+    margin-left: 0.75rem;
+    padding-left: 0.75rem;
+  }
+}
+
+/* Responsive tree indent — activate the larger desktop value on sm+ */
+@media (min-width: 640px) {
+  [style*="--indent-desktop"] {
+    --tree-indent: var(--indent-desktop) !important;
+  }
+}
+
+/* Selected tree node indicator */
+.tree-node-content.selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0.25rem;
+  background-color: rgb(124 58 237);
+  border-radius: 0 0.25rem 0.25rem 0;
+}
+
+/* Custom scrollbar for main area */
+.app-main::-webkit-scrollbar {
+  width: 0.625rem;
+}
+
+.app-main::-webkit-scrollbar-track {
+  background-color: rgb(243 244 246);
+  border-radius: 0.5rem;
+}
+
+.app-main::-webkit-scrollbar-thumb {
+  background-color: rgb(209 213 219);
+  border-radius: 0.5rem;
+}
+
+.app-main::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(156 163 175);
+}
+
+/* Custom scrollbar for folder list */
+.folder-list::-webkit-scrollbar {
+  width: 0.5rem;
+}
+
+.folder-list::-webkit-scrollbar-track {
+  background-color: rgb(243 244 246);
+  border-radius: 0.25rem;
+}
+
+.folder-list::-webkit-scrollbar-thumb {
+  background-color: rgb(209 213 219);
+  border-radius: 0.25rem;
+}
+
+.folder-list::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(156 163 175);
+}
+
+/* Background pattern for header */
+.header-pattern {
+  background-image: url('data:image/svg+xml,<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg"><defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>');
+}
