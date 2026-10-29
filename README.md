@@ -1,175 +1,142 @@
-# File Explorer Application
+# 📁 File Explorer
 
-A React-based file explorer with a robust JavaScript SDK for managing files and folders in memory.
+A React-based file explorer UI backed by a standalone JavaScript SDK for managing files and folders entirely in memory — no backend, no database.
 
-## Features
+The project is split into two layers: a **framework-agnostic SDK** that handles all file system logic, and a **React app** that consumes it through a custom hook. The SDK can be used independently in any JavaScript project.
 
-- 📁 Recursive file tree with expand/collapse
-- ✏️ Create, rename, move, and delete files/folders
-- 🔍 Search with filtering and sorting
-- ↶↷ Undo/redo functionality
-- 🎯 Breadcrumb navigation
+### ✨ Features
+
+- 📂 Recursive file tree with expand/collapse
+- ✏️ Create, rename, move, and delete files and folders
+- 🔍 Search with type filters, sorting, and pagination
+- ↩️ Undo/redo with configurable history limit
+- ⚡ Atomic transactions — all operations succeed or none apply
+- 🔔 Event subscriptions for real-time UI updates
+- 🧭 Breadcrumb navigation
 - ⌨️ Keyboard shortcuts
-- 🎨 Toast notifications
+- 🔒 Immutable data with structural sharing for performance
 - ♿ Accessibility support (ARIA)
 
-## Getting Started
+---
 
-The commands below should be run from the `react-app` directory.
+## 🗂️ Project Structure
 
-### 3. Install dependencies and run the application
-
-Install the React application's dependencies:
-
-```bash
-cd react-app
-npm install
+```
+SDK JS/
+├── sdk/                    # Standalone JS SDK (no React dependency)
+│   ├── FileExplorer.js     # Core class
+│   ├── Transaction.js      # Atomic transactions
+│   ├── constants.js        # ItemType, ErrorCode, DEFAULT_TREE
+│   ├── errors.js           # FileExplorerError
+│   └── FileExplorer.test.js
+└── react-app/              # Vite + React app
+    ├── src/
+    │   ├── explorer.js           # Shared SDK singleton
+    │   ├── hooks/
+    │   │   ├── useFileExplorer.js       # SDK ↔ React bridge
+    │   │   └── useFileExplorer.test.js
+    │   ├── components/           # TreeView, Toolbar, dialogs, …
+    │   └── App.jsx
+    └── vitest.config.js    # Runs both sdk/ and src/ tests
 ```
 
-Start the Vite development server:
+---
 
-```bash
+## 🚀 Getting Started
+
+```powershell
+cd react-app
+npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite (normally `http://localhost:5173`) in a browser.
+---
 
-To create a production build:
+## 🧪 Testing
 
-```bash
-npm run build
+Both test files are picked up by `react-app/vitest.config.js`. Always run from `react-app/`.
+
+```powershell
+cd react-app
+npm run test:run
 ```
 
-To preview the production build locally:
+---
 
-```bash
-npm run preview
-```
-
-## React App and SDK Usage
-
-The app creates one SDK instance in [`src/explorer.js`](./src/explorer.js):
+## 🛠️ SDK Usage
 
 ```js
-import { createFileExplorer } from '../../sdk/index.js';
+import { createFileExplorer, FileExplorerError } from '../sdk/index.js';
 
-export const fs = createFileExplorer();
+const fs = createFileExplorer(); // uses default tree
+
+// CRUD
+const file   = fs.createFile(fs.rootId, 'notes.txt', 'Hello');
+const folder = fs.createFolder(fs.rootId, 'Docs');
+fs.rename(file.id, 'readme.txt');
+fs.move(file.id, folder.id);
+fs.delete(folder.id);
+
+// Read
+fs.getItem(id);
+fs.getTree();
+fs.getPath(id);        // breadcrumb array
+fs.getPathString(id);  // "My Files/Docs/readme.txt"
+
+// Search
+fs.search('report', { type: 'file', sortBy: 'name', sortOrder: 'asc', page: 1, pageSize: 10 });
+
+// Undo / Redo
+fs.undo();
+fs.redo();
+fs.canUndo(); // boolean
+fs.canRedo(); // boolean
+
+// Transactions
+const tx = fs.beginTransaction();
+tx.createFile(fs.rootId, 'a.txt');
+tx.createFolder(fs.rootId, 'Docs');
+tx.commit();    // atomic — all or nothing
+// tx.rollback() to cancel
+
+// Subscriptions
+const unsub = fs.subscribe((event) => console.log(event.type));
+unsub();
 ```
 
-The [`useFileExplorer` hook](./src/hooks/useFileExplorer.js) subscribes to SDK changes
-with React's `useSyncExternalStore` and exposes the current tree and file operations:
+Errors throw `FileExplorerError` with a `code` (`INVALID_NAME`, `DUPLICATE_NAME`, `NOT_FOUND`, `INVALID_MOVE`, etc.) and a human-readable `message`.
+
+---
+
+## ⚛️ React Integration
 
 ```jsx
 import { useFileExplorer } from './hooks/useFileExplorer';
 
 function Example() {
-  const { tree, rootId, actions, canUndo, canRedo } = useFileExplorer();
-
-  const addFile = () => {
-    actions.createFile(rootId, 'welcome.txt', 'Hello from the SDK');
-  };
+  const { tree, rootId, actions, canUndo, canRedo } = useFileExplorer(
+    (msg) => console.error(msg)  // optional error callback
+  );
 
   return (
     <>
-      <button onClick={addFile}>Add file</button>
+      <button onClick={() => actions.createFile(rootId, 'new.txt')}>New file</button>
       <button onClick={actions.undo} disabled={!canUndo}>Undo</button>
       <button onClick={actions.redo} disabled={!canRedo}>Redo</button>
-      <pre>{JSON.stringify(tree, null, 2)}</pre>
     </>
   );
 }
 ```
 
-The SDK also provides `createFolder`, `rename`, `move`, `delete`, `search`,
-`getItem`, `getPath`, and `getPathString`. Invalid operations are surfaced as
-`FileExplorerError` instances and are handled by the hook's error callback.
+The hook uses `useSyncExternalStore` to subscribe to SDK changes. SDK errors are caught and forwarded to the `onError` callback instead of crashing the component.
 
-### Build
+---
 
-```bash
-npm run build
-```
+## 🧰 Tech Stack
 
-### Preview Production Build
-
-```bash
-npm run preview
-```
-
-## Testing
-
-### 4. Run automated tests
-
-From the `react-app` directory, install dependencies if you have not already:
-
-```bash
-npm install
-```
-
-Run the complete automated test suite once:
-
-```bash
-npm run test:run
-```
-
-Other supported test commands are:
-
-```bash
-# Run tests interactively in watch mode
-npm test
-
-# Run tests with the Vitest UI
-npm run test:ui
-
-# Generate a coverage report
-npm run test:coverage
-```
-
-The tests cover SDK operations, error handling, undo/redo, search, React
-subscriptions, component behavior, and accessibility interactions.
-
-## Architecture
-
-### SDK (`../sdk/FileExplorer.js`)
-
-Standalone JavaScript class that manages the file system:
-- Immutable data structures
-- Structural sharing for performance
-- Event notifications
-- Undo/redo history
-- Independent of React
-
-### React Integration (`src/hooks/useFileExplorer.js`)
-
-Custom hook using `useSyncExternalStore`:
-- Efficient subscriptions
-- Automatic cleanup
-- Error handling
-- Memoized actions
-
-### Components
-
-- `App.jsx` - Main application
-- `TreeView.jsx` - Tree container
-- `TreeNode.jsx` - Recursive tree node (React.memo optimized)
-- `Toolbar.jsx` - Action buttons
-- `SearchBar.jsx` - Debounced search
-- `Breadcrumb.jsx` - Path navigation
-- Various dialogs and UI components
-
-
-## Performance Optimizations
-
-- **React.memo** on TreeNode component
-- **Structural sharing** in SDK (unchanged nodes keep same reference)
-- **useSyncExternalStore** for efficient subscriptions
-- **useCallback** for event handlers
-- **Debounced search** (300ms)
-- **Referential stability** of tree when unchanged
-
-## Technology Stack
-
-- **React 19** - UI library
-- **Vite 8** - Build tool and dev server
-- **Vitest 5** - Testing framework
-- **@testing-library/react** - React testing utilities
+| | |
+|---|---|
+| ⚛️ React 19 | UI library |
+| ⚡ Vite 8 | Dev server and build tool |
+| 🧪 Vitest 5 | Test runner |
+| 🎨 Tailwind CSS 3 | Styling |
