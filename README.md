@@ -14,7 +14,6 @@ Demo Link : https://drive.google.com/file/d/15s4Z6ET-iOnB5epZYlnIHMJQng92DEXW/vi
 - ⚡ Atomic transactions — all operations succeed or none apply
 - 🔔 Event subscriptions for real-time UI updates
 - 🧭 Breadcrumb navigation
-- ⌨️ Keyboard shortcuts
 - 🔒 Immutable data with structural sharing for performance
 - ♿ Accessibility support (ARIA)
 
@@ -55,12 +54,44 @@ npm run dev
 
 ## 🧪 Testing
 
-Both test files are picked up by `react-app/vitest.config.js`. Always run from `react-app/`.
+Both the SDK and React integration have comprehensive test coverage using **Vitest 5**.
 
-```powershell
+### Test Coverage
+
+- **`sdk/FileExplorer.test.js`** — 90 tests covering:
+  - CRUD operations, validation, circular move prevention
+  - Search with filters, sorting, and pagination
+  - Undo/redo, subscriptions, transactions, immutability
+
+- **`src/hooks/useFileExplorer.test.js`** — 30 tests covering:
+  - Subscription lifecycle, UI state reactivity
+  - Error handling, action memoization
+
+**Total: 120 tests**
+
+### Commands
+
+```bash
 cd react-app
+
+# Run tests in watch mode
+npm test
+
+# Run tests once
 npm run test:run
 ```
+
+### Expected Output
+
+```
+✓ ../sdk/FileExplorer.test.js (90 tests)
+✓ src/hooks/useFileExplorer.test.js (30 tests)
+
+Test Files  2 passed (2)
+Tests  120 passed (120)
+```
+
+**Note:** You may see an intentional error message `[FileExplorer] listener threw: Error: bad listener` during the subscription tests. This is expected behavior testing error resilience.
 
 ---
 

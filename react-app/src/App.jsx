@@ -1,9 +1,8 @@
-import { useMemo, useCallback } from 'react';
+import { useCallback } from 'react';
 import { useFileExplorer } from './hooks/useFileExplorer';
 import { useAppState } from './hooks/useAppState';
 import { useEventSubscription } from './hooks/useEventSubscription';
 import { useSearch } from './hooks/useSearch';
-import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useTreeHandlers } from './hooks/useTreeHandlers';
 import { useDialogHandlers } from './hooks/useDialogHandlers';
 import { fs } from './explorer';
@@ -23,8 +22,10 @@ import {
 import './App.css';
 
 function App() {
+  console.log('App component rendering...');
   const state = useAppState();
   const { tree, canUndo, canRedo, actions } = useFileExplorer(state.setErrorMessage);
+  console.log('Tree loaded:', tree);
 
   useEventSubscription({
     selectedId: state.selectedId,
@@ -84,22 +85,7 @@ function App() {
     });
   }, [treeHandlers.handleSelectSearchResult, state.setSearchQuery, state.setSearchFilter, state.setSearchResponse]);
 
-  useKeyboardShortcuts({
-    selectedId: state.selectedId,
-    selectedIds: state.selectedIds,
-    actions,
-    onNewFile: dialogHandlers.handleNewFile,
-    onNewFolder: dialogHandlers.handleNewFolder,
-    onRenameClick: dialogHandlers.handleRenameClick,
-    onDeleteClick: dialogHandlers.handleDeleteClick,
-    onBulkDeleteClick: dialogHandlers.handleBulkDeleteClick,
-    onClearSelection: treeHandlers.handleClearSelection,
-  });
-
-  const breadcrumbPath = useMemo(() => {
-    if (!state.selectedId) return null;
-    return actions.getPath(state.selectedId);
-  }, [state.selectedId, actions]);
+  const breadcrumbPath = state.selectedId ? actions.getPath(state.selectedId) : null;
 
   return (
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-gradient-to-br from-purple-600 via-purple-700 to-indigo-800">

@@ -1,4 +1,5 @@
 import { FileExplorerError } from './errors.js';
+import { ErrorCode } from './constants.js';
 
 export class Transaction {
   #sdk;
@@ -75,18 +76,18 @@ export class Transaction {
         }
         results.push(result);
       }
-
-      this.#sdk.setSilentMode(false);
-      this.#sdk.consolidateHistory(savedState, this.#operations.length);
-
-      this.#committed = true;
-      return { success: true, results };
     } catch (error) {
-      this.#sdk.setSilentMode(false);
       this.#sdk.restoreStateSnapshot(savedState);
       this.#rolledBack = true;
       return { success: false, results: [], error };
+    } finally {
+      this.#sdk.setSilentMode(false);
     }
+
+    this.#sdk.consolidateHistory(savedState);
+
+    this.#committed = true;
+    return { success: true, results };
   }
 
   rollback() {
@@ -105,10 +106,10 @@ export class Transaction {
 
   #checkActive() {
     if (this.#committed) {
-      throw new FileExplorerError('INVALID_ARGUMENT', 'Transaction already committed.');
+      throw new FileExplorerError(ErrorCode.INVALID_ARGUMENT, 'Transaction already committed.');
     }
     if (this.#rolledBack) {
-      throw new FileExplorerError('INVALID_ARGUMENT', 'Transaction already rolled back.');
+      throw new FileExplorerError(ErrorCode.INVALID_ARGUMENT, 'Transaction already rolled back.');
     }
   }
 }
